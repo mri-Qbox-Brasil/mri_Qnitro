@@ -110,8 +110,7 @@ local function nitrousUseLoop()
     end)
 end
 
-AddStateBagChangeHandler('nitroFlames', nil, function(bagName, _, value)
-    local veh = GetEntityFromStateBagName(bagName)
+qbx.entityStateHandler('nitroFlames', function(veh, netId, value)
     if value then
         syncFlames(veh)
     else
@@ -123,14 +122,14 @@ end)
 local NitrousLoop = false
 local function nitrousLoop()
     if not cache.vehicle or cache.seat ~= -1 then return end
-    local sleep = 0
+    local sleep, vehicleState = 0, Entity(cache.vehicle)?.state
     NitrousLoop = true
     CreateThread(function()
         while cache.vehicle and NitrousLoop do
-            if IsVehicleEngineOn(cache.vehicle) and (Entity(cache.vehicle)?.state?.nitro or 0) > 0 then
+            if IsVehicleEngineOn(cache.vehicle) and (vehicleState?.nitro or 0) > 0 then
                 sleep = 0
                 if IsControlJustPressed(0, 36) and not nitroDelay then
-                    Entity(cache.vehicle).state:set("nitroFlames", true, true)
+                    vehicleState:set("nitroFlames", true, true)
                     nitrousUseLoop()
                 end
             else
