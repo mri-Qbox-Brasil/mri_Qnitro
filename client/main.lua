@@ -46,7 +46,6 @@ local function syncFlames(vehicle)
             NOSPFX[trimmedPlate][bone] = {}
         end
         if GetEntityBoneIndexByName(vehicle, bone) ~= -1 then
-            print(bone)
             if NOSPFX[trimmedPlate][bone].pfx == nil then
                 RequestNamedPtfxAsset(ParticleDict)
                 while not HasNamedPtfxAssetLoaded(ParticleDict) do
@@ -128,7 +127,7 @@ local function nitrousLoop()
     NitrousLoop = true
     CreateThread(function()
         while cache.vehicle and NitrousLoop do
-            if (Entity(cache.vehicle)?.state?.nitro or 0) > 0 then
+            if IsVehicleEngineOn(cache.vehicle) and (Entity(cache.vehicle)?.state?.nitro or 0) > 0 then
                 sleep = 0
                 if IsControlJustPressed(0, 36) and not nitroDelay then
                     Entity(cache.vehicle).state:set("nitroFlames", true, true)
