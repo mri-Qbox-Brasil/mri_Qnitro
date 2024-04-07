@@ -1,0 +1,12 @@
+{
+    "notify": {
+        "already_have_nos": "Você já possui NOS!",
+        "not_in_vehicle": "Você não está em um veículo",
+        "must_be_driver": "Você deve ser o motorista!",
+        "canceled": "Cancelado...",
+        "need_turbo" : "O veículo precisa de um turbo para usar NOS!"
+    },
+    "progress": {
+        "connecting": "Conectando NOS.."
+    }
+}
