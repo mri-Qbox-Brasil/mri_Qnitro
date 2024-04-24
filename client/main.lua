@@ -1,30 +1,207 @@
 local config = require 'config.client'
 local nitrousActivated = false
 local nitrousBoost = config.nitrousBoost
-local Fxs = {}
 local nitroDelay = false
+local PurgeLoop = false
 
-lib.locale()
-
-local function trim(value)
-    if not value then return nil end
-    return (string.gsub(value, '^%s*(.-)%s*$', '%1'))
+local function setMultipliers(vehicle, disable)
+    local multiplier = disable and 1.0 or nitrousBoost
+    SetVehicleEnginePowerMultiplier(vehicle, multiplier)
+    SetVehicleEngineTorqueMultiplier(vehicle, multiplier)
 end
 
-RegisterNetEvent('qbx_nitro:client:LoadNitrous', function()
-    if nitrousActivated then
-        return exports.qbx_core:Notify(locale('notify.already_have_nos'), 'error')
+local function stopBoosting()
+    SetVehicleBoostActive(cache.vehicle, false)
+    setMultipliers(cache.vehicle, true)
+    Entity(cache.vehicle).state:set('nitroFlames', false, true)
+    StopScreenEffect('RaceTurbo')
+    nitrousActivated = false
+end
+
+local function nitrousUseLoop()
+    nitrousActivated = true
+    nitroDelay = true
+    SetTimeout(3000, function()
+        nitroDelay = false
+    end)
+    local vehicleState = Entity(cache.vehicle).state
+    SetVehicleBoostActive(cache.vehicle, true)
+    CreateThread(function()
+        while nitrousActivated and cache.vehicle do
+            if vehicleState.nitro - 0.25 >= 0 then
+                setMultipliers(cache.vehicle, false)
+                SetEntityMaxSpeed(cache.vehicle, 999.0)
+                StartScreenEffect('RaceTurbo', 0, false)
+                vehicleState:set('nitro', vehicleState.nitro - 0.25, true)
+                vehicleState:set('nitroPurge', (vehicleState.nitroPurge or 0) + 1, true)
+                if vehicleState.nitroPurge >= 100 then
+                    exports.qbx_core:Notify(locale('notify.needs_purge'), 'error')
+                    stopBoosting()
+                end
+            else
+                stopBoosting()
+                vehicleState:set('nitro', 0, true)
+            end
+            Wait(100)
+        end
+    end)
+end
+
+local function stopPurging()
+    local vehicleState = Entity(cache.vehicle).state
+    vehicleState:set('purgeNitro', false, true)
+    PurgeLoop = false
+end
+
+local function nitrousPurgeLoop()
+    local vehicleState = Entity(cache.vehicle).state
+    PurgeLoop = true
+    CreateThread(function()
+        while PurgeLoop and cache.vehicle do
+            if vehicleState.nitroPurge - 1 >= 0 then
+                vehicleState:set('nitroPurge', vehicleState.nitroPurge - 1, true)
+            else
+                vehicleState:set('nitroPurge', 0, true)
+                stopPurging()
+            end
+            Wait(100)
+        end
+    end)
+end
+
+qbx.entityStateHandler('nitroFlames', function(veh, netId, value)
+    if not veh or not DoesEntityExist(veh) then return end
+
+    SetVehicleNitroEnabled(veh, value)
+    EnableVehicleExhaustPops(veh, not value)
+    SetVehicleBoostActive(veh, value)
+end)
+
+local purge = {}
+qbx.entityStateHandler('purgeNitro', function(veh, netId, value)
+    if not veh or not DoesEntityExist(veh) then return end
+
+    if not value then
+        local currentPurge = purge[veh]
+        if currentPurge?.left then
+            StopParticleFxLooped(currentPurge.left, false)
+        end
+        if currentPurge?.right then
+            StopParticleFxLooped(currentPurge.right, false)
+        end
+        purge[veh] = nil
+        return
     end
+
+    local bone
+    local pos
+    local off
+
+    bone = GetEntityBoneIndexByName(veh, 'bonnet')
+    if bone == -1 then
+        bone = GetEntityBoneIndexByName(veh, 'engine')
+    end
+
+    pos = GetWorldPositionOfEntityBone(veh, bone)
+    off = GetOffsetFromEntityGivenWorldCoords(veh, pos.x, pos.y, pos.z)
+
+    if bone == GetEntityBoneIndexByName(veh, 'bonnet') then
+        off += vec3(0.0, 0.05, 0)
+    else
+        off += vec3(0.0, -0.2, 0.2)
+    end
+
+    UseParticleFxAssetNextCall('core')
+    local leftPurge = StartParticleFxLoopedOnEntity('ent_sht_steam', veh, off.x - 0.5, off.y, off.z, 40.0, -20.0, 0.0, 0.3, false, false, false)
+    UseParticleFxAssetNextCall('core')
+    local rightPurge = StartParticleFxLoopedOnEntity('ent_sht_steam', veh, off.x + 0.5, off.y, off.z, 40.0, 20.0, 0.0, 0.3, false, false, false)
+    purge[veh] = {left = leftPurge, right = rightPurge}
+end)
+
+local nitrousKeybind = lib.addKeybind({
+    name = 'nitrous',
+    description = 'Use Nitrous',
+    defaultKey = 'LCONTROL',
+    onPressed = function(_)
+        if not cache.vehicle then return end
+        local vehicleState = Entity(cache.vehicle).state
+        if nitroDelay  or nitrousActivated then return end
+        if (vehicleState?.nitro or 0) > 0 and (vehicleState.nitroPurge or 0) < 100 then
+            vehicleState:set('nitroFlames', true, true)
+            nitrousUseLoop()
+        end
+    end,
+    onReleased = function(_)
+        if not cache.vehicle then return end
+        stopBoosting()
+    end
+})
+
+local purgeKeybind = lib.addKeybind({
+    name = 'purge',
+    description = 'Purge Nitrous',
+    defaultKey = 'LSHIFT',
+    onPressed = function(_)
+        if not cache.vehicle then return end
+        local vehicleState = Entity(cache.vehicle).state
+        if not nitrousActivated and (vehicleState?.nitroPurge or 0) > 0 then
+            vehicleState:set('purgeNitro', true, true)
+            nitrousPurgeLoop()
+        end
+    end,
+    onReleased = function(_)
+        if not cache.vehicle then return end
+        stopPurging()
+    end
+})
+
+
+lib.onCache('seat', function(seat)
+    if seat ~= -1 then
+        nitrousKeybind:disable(true)
+        purgeKeybind:disable(true)
+        NitrousLoop = false
+        return
+    end
+
+    if config.turboRequired and not IsToggleModOn(cache.vehicle, 18) then return end
+    nitrousKeybind:disable(false)
+    purgeKeybind:disable(false)
+end)
+
+lib.onCache('vehicle', function(vehicle)
+    if not vehicle then
+        if nitrousActivated then
+            nitrousActivated = false
+            stopBoosting()
+        end
+        if PurgeLoop then
+            PurgeLoop = false
+            stopPurging()
+        end
+    end
+end)
+
+lib.callback.register('qbx_nitro:client:LoadNitrous', function()
     if not cache.vehicle or IsThisModelABike(cache.vehicle) then
-        return exports.qbx_core:Notify(locale('notify.not_in_vehicle'), 'error')
+        exports.qbx_core:Notify(locale('notify.not_in_vehicle'), 'error')
+        return false
     end
 
     if config.turboRequired and not IsToggleModOn(cache.vehicle, 18) then
-        return exports.qbx_core:Notify(locale('notify.need_turbo'), 'error')
+        exports.qbx_core:Notify(locale('notify.need_turbo'), 'error')
+        return false
     end
-    
+
     if cache.seat ~= -1 then
-        return exports.qbx_core:Notify(locale('notify.must_be_driver'), "error")
+        exports.qbx_core:Notify(locale('notify.must_be_driver'), 'error')
+        return false
+    end
+
+    local vehicleState = Entity(cache.vehicle).state
+    if vehicleState.nitro and vehicleState.nitro > 0 then
+        exports.qbx_core:Notify(locale('notify.already_have_nos'), 'error')
+        return false
     end
 
     if lib.progressBar({
@@ -35,172 +212,10 @@ RegisterNetEvent('qbx_nitro:client:LoadNitrous', function()
             disable = {
                 combat = true
             }
-        }) then -- if completed
-        TriggerServerEvent('qbx_nitro:server:LoadNitrous', NetworkGetNetworkIdFromEntity(cache.vehicle))
-    else        -- if canceled
+    }) then -- if completed
+        return VehToNet(cache.vehicle)
+    else    -- if canceled
         exports.qbx_core:Notify(locale('notify.canceled'), 'error')
-    end
-end)
-
-local function nitrousUseLoop()
-    nitroDelay = true
-    SetTimeout(3000, function()
-        nitroDelay = false
-    end)
-    CreateThread(function()
-        local Plate = trim(GetVehicleNumberPlateText(cache.vehicle))
-        while nitrousActivated and cache.vehicle do
-            if Entity(cache.vehicle).state.nitro - 0.25 >= 0 then
-                SetVehicleEnginePowerMultiplier(cache.vehicle, nitrousBoost)
-                SetVehicleEngineTorqueMultiplier(cache.vehicle, nitrousBoost)
-                SetEntityMaxSpeed(cache.vehicle, 999.0)
-                Entity(cache.vehicle).state:set("nitro", Entity(cache.vehicle).state.nitro - 0.25, true)
-            else
-                SetVehicleBoostActive(cache.vehicle, 0)
-                SetVehicleEnginePowerMultiplier(cache.vehicle, 1.0)
-                SetVehicleEngineTorqueMultiplier(cache.vehicle, 1.0)
-                for index, _ in pairs(Fxs) do
-                    StopParticleFxLooped(Fxs[index], 1)
-                    TriggerServerEvent('qbx_nitro:server:StopSync', Plate)
-                    Fxs[index] = nil
-                end
-                StopScreenEffect("RaceTurbo")
-                TriggerServerEvent('qbx_nitro:server:UnloadNitrous', Plate)
-                nitrousActivated = false
-            end
-            if IsControlJustReleased(0, 36) and cache.seat == -1 then
-                SetVehicleBoostActive(cache.vehicle, 0)
-                SetVehicleEnginePowerMultiplier(cache.vehicle, 1.0)
-                SetVehicleEngineTorqueMultiplier(cache.vehicle, 1.0)
-                for index, _ in pairs(Fxs) do
-                    StopParticleFxLooped(Fxs[index], 1)
-                    TriggerServerEvent('qbx_nitro:server:StopSync', Plate)
-                    Fxs[index] = nil
-                end
-                StopScreenEffect("RaceTurbo")
-                nitrousActivated = false
-            end
-            Wait(0)
-        end
-    end)
-end
-
-local function nitrousLoop()
-    local sleep = 0
-    CreateThread(function()
-        while cache.vehicle do
-            if (Entity(cache.vehicle)?.state?.nitro or 0) > 0 then
-                sleep = 0
-                if IsControlJustPressed(0, 36) and cache.seat == -1 and not nitroDelay then
-                    TriggerServerEvent('qbx_nitro:server:SyncFlames', VehToNet(cache.vehicle))
-                    nitrousActivated = true
-                    loadEffects()
-                    nitrousUseLoop()
-                end
-            else
-                sleep = 1000
-            end
-            Wait(sleep)
-        end
-    end)
-end
-
-lib.onCache('vehicle', function(vehicle)
-    if vehicle and (not config.turboRequired or IsToggleModOn(vehicle, 18)) then
-        SetTimeout(750, function()
-            nitrousLoop()
-        end)
-    end
-end)
-
-p_flame_location = {
-    "exhaust",
-    "exhaust_2",
-    "exhaust_3",
-    "exhaust_4",
-    "exhaust_5",
-    "exhaust_6",
-    "exhaust_7",
-    "exhaust_8",
-    "exhaust_9",
-    "exhaust_10",
-    "exhaust_11",
-    "exhaust_12",
-    "exhaust_13",
-    "exhaust_14",
-    "exhaust_15",
-    "exhaust_16",
-}
-
-ParticleDict = "veh_xs_vehicle_mods"
-ParticleFx = "veh_nitrous"
-ParticleSize = 1.4
-
-function loadEffects()
-    CreateThread(function()
-        while nitrousActivated do
-            local veh = GetVehiclePedIsIn(PlayerPedId())
-            if veh ~= 0 then
-                SetVehicleBoostActive(veh, 1)
-                StartScreenEffect("RaceTurbo", 0.0, 0)
-
-                for _, bones in pairs(p_flame_location) do
-                    if GetEntityBoneIndexByName(veh, bones) ~= -1 then
-                        if Fxs[bones] == nil then
-                            RequestNamedPtfxAsset(ParticleDict)
-                            while not HasNamedPtfxAssetLoaded(ParticleDict) do
-                                Wait(0)
-                            end
-                            SetPtfxAssetNextCall(ParticleDict)
-                            UseParticleFxAssetNextCall(ParticleDict)
-                            Fxs[bones] = StartParticleFxLoopedOnEntityBone(ParticleFx, veh, 0.0, -0.02, 0.0, 180, 0.0,
-                                0.0, GetEntityBoneIndexByName(veh, bones), ParticleSize, 0.0, 0.0, 0.0)
-                        end
-                    end
-                end
-            end
-            Wait(0)
-        end
-    end)
-end
-
-local NOSPFX = {}
-
-RegisterNetEvent('qbx_nitro:client:SyncFlames', function(netid, nosid)
-    local veh = NetToVeh(netid)
-    if veh ~= 0 then
-        local myid = GetPlayerServerId(PlayerId())
-        if NOSPFX[trim(GetVehicleNumberPlateText(veh))] == nil then
-            NOSPFX[trim(GetVehicleNumberPlateText(veh))] = {}
-        end
-        if myid ~= nosid then
-            for _, bones in pairs(p_flame_location) do
-                if NOSPFX[trim(GetVehicleNumberPlateText(veh))][bones] == nil then
-                    NOSPFX[trim(GetVehicleNumberPlateText(veh))][bones] = {}
-                end
-                if GetEntityBoneIndexByName(veh, bones) ~= -1 then
-                    if NOSPFX[trim(GetVehicleNumberPlateText(veh))][bones].pfx == nil then
-                        RequestNamedPtfxAsset(ParticleDict)
-                        while not HasNamedPtfxAssetLoaded(ParticleDict) do
-                            Wait(0)
-                        end
-                        SetPtfxAssetNextCall(ParticleDict)
-                        UseParticleFxAssetNextCall(ParticleDict)
-                        NOSPFX[trim(GetVehicleNumberPlateText(veh))][bones].pfx = StartParticleFxLoopedOnEntityBone(
-                            ParticleFx, veh, 0.0, -0.05, 0.0, 0.0, 0.0, 0.0, GetEntityBoneIndexByName(veh, bones),
-                            ParticleSize, 0.0, 0.0, 0.0)
-                    end
-                end
-            end
-        end
-    end
-end)
-
-RegisterNetEvent('qbx_nitro:client:StopSync', function(plate)
-    if NOSPFX[plate] ~= nil then
-        for k, v in pairs(NOSPFX[plate]) do
-            StopParticleFxLooped(v.pfx, 1)
-            NOSPFX[plate][k].pfx = nil
-        end
+        return false
     end
 end)
