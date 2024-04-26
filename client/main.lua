@@ -14,7 +14,7 @@ local function stopBoosting()
     SetVehicleBoostActive(cache.vehicle, false)
     setMultipliers(cache.vehicle, true)
     Entity(cache.vehicle).state:set('nitroFlames', false, true)
-    StopScreenEffect('RaceTurbo')
+    -- StopScreenEffect('RaceTurbo')
     nitrousActivated = false
 end
 
@@ -31,7 +31,7 @@ local function nitrousUseLoop()
             if vehicleState.nitro - 0.25 >= 0 then
                 setMultipliers(cache.vehicle, false)
                 SetEntityMaxSpeed(cache.vehicle, 999.0)
-                StartScreenEffect('RaceTurbo', 0, false)
+                -- StartScreenEffect('RaceTurbo', 0, false)
                 vehicleState:set('nitro', vehicleState.nitro - 0.25, true)
                 vehicleState:set('nitroPurge', (vehicleState.nitroPurge or 0) + 1, true)
                 if vehicleState.nitroPurge >= 100 then
@@ -71,9 +71,13 @@ end
 
 qbx.entityStateHandler('nitroFlames', function(veh, netId, value)
     if not veh or not DoesEntityExist(veh) then return end
+    RemoveNamedPtfxAsset("veh_xs_vehicle_mods")
+
+    RequestNamedPtfxAsset("veh_xs_vehicle_mods")
+    RequestPtfxAsset("veh_xs_vehicle_mods")
 
     SetVehicleNitroEnabled(veh, value)
-    EnableVehicleExhaustPops(veh, not value)
+    -- EnableVehicleExhaustPops(veh, value)
     SetVehicleBoostActive(veh, value)
 end)
 
@@ -126,7 +130,7 @@ local nitrousKeybind = lib.addKeybind({
     onPressed = function(_)
         if not cache.vehicle then return end
         local vehicleState = Entity(cache.vehicle).state
-        if nitroDelay  or nitrousActivated then return end
+        if nitroDelay or nitrousActivated then return end
         if (vehicleState?.nitro or 0) > 0 and (vehicleState.nitroPurge or 0) < 100 then
             vehicleState:set('nitroFlames', true, true)
             nitrousUseLoop()
@@ -219,3 +223,102 @@ lib.callback.register('qbx_nitro:client:LoadNitrous', function()
         return false
     end
 end)
+
+
+
+-- Enable Global Slipstream
+local SyncStop = false
+
+CreateThread(function()
+    Wait(1000)
+    SetEnableVehicleSlipstreaming(true)
+    if true then 
+        print("Slip Stream Enabled")
+    end
+end)
+
+-- Global Loop
+CreateThread(function()
+    while true do 
+        Wait(1000)
+        local myped = PlayerPedId()
+        if IsPedInAnyVehicle(myped, false) then 
+            local mycar = GetVehiclePedIsIn(myped, false)
+            local slip = nitrousActivated --IsVehicleSlipstreamLeader(mycar) == 1
+            if slip then
+                if SyncStop then
+                    SyncStop = false
+                end
+                TriggerServerEvent('slipstream:sync', true, NetworkGetNetworkIdFromEntity(mycar))
+            else
+                if not SyncStop then
+                    TriggerServerEvent('slipstream:sync', false, NetworkGetNetworkIdFromEntity(mycar))
+                    SyncStop = true
+                end
+            end
+            local slipam = GetVehicleCurrentSlipstreamDraft(GetVehiclePedIsIn(PlayerPedId(),false))
+            if slipam > 1.0 then 
+                ShakeGameplayCam('SKY_DIVING_SHAKE', 0.75)
+            else
+                StopGameplayCamShaking(true)
+            end
+        end
+    end
+end)
+
+RegisterNetEvent('slipstream:client:sync',function(enabled,car)
+    if not NetworkDoesEntityExistWithNetworkId(car) then return end -- neen sync
+    local veh = NetworkGetEntityFromNetworkId(car)
+    SetVehicleLightTrailEnabled(veh,enabled)
+end)
+
+-- trails code from : https://github.com/swcfx/sw-nitro/blob/master/client/trails.lua
+
+local vehicles = {}
+local particles = {}
+
+function IsVehicleLightTrailEnabled(vehicle)
+    return vehicles[vehicle] == true
+end
+
+function SetVehicleLightTrailEnabled(vehicle, enabled)
+    if IsVehicleLightTrailEnabled(vehicle) == enabled then return end
+    if enabled then
+        local ptfxs = {}
+        local leftTrail = CreateVehicleLightTrail(vehicle, GetEntityBoneIndexByName(vehicle, "taillight_l"), 1.0)
+        local rightTrail = CreateVehicleLightTrail(vehicle, GetEntityBoneIndexByName(vehicle, "taillight_r"), 1.0)
+        ptfxs[#ptfxs+1] = leftTrail
+        ptfxs[#ptfxs+1] = rightTrail
+        vehicles[vehicle] = true
+        particles[vehicle] = ptfxs
+    else
+        if particles[vehicle] and #particles[vehicle] > 0 then
+            for _, particleId in ipairs(particles[vehicle]) do
+                StopVehicleLightTrail(particleId, 500)
+            end
+        end
+        vehicles[vehicle] = nil
+        particles[vehicle] = nil
+    end
+end
+
+function CreateVehicleLightTrail(vehicle, bone, scale)
+    UseParticleFxAssetNextCall('core')
+    local ptfx = StartParticleFxLoopedOnEntityBone('veh_light_red_trail', vehicle, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, bone, scale, false, false, false)
+    SetParticleFxLoopedEvolution(ptfx, "speed", 1.0, false)
+    return ptfx
+end
+
+function StopVehicleLightTrail(ptfx, duration)
+    CreateThread(function()
+      local endTime = GetGameTimer() + duration
+      while GetGameTimer() < endTime do 
+        Wait(0)
+        local now = GetGameTimer()
+        local scale = (endTime - now) / duration
+        SetParticleFxLoopedScale(ptfx, scale)
+        SetParticleFxLoopedAlpha(ptfx, scale)
+      end
+      StopParticleFxLooped(ptfx)
+    end)
+end

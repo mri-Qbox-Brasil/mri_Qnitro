@@ -10,7 +10,8 @@ shared_script '@ox_lib/init.lua'
 
 client_scripts {
     '@qbx_core/modules/lib.lua',
-    'client/main.lua'
+    'client/main.lua',
+    'client/slipstream.lua'
 }
 
 server_script 'server/main.lua'

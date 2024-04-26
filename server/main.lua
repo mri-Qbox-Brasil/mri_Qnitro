@@ -9,3 +9,9 @@ exports.qbx_core:CreateUseableItem('nitrous', function(source)
         Entity(vehicle).state:set('nitro', 100, true)
     end
 end)
+
+-- bbv-slipstream
+-- Server Sync
+RegisterNetEvent('slipstream:sync',function(enabled,car)
+    TriggerClientEvent('slipstream:client:sync', -1, enabled, car)
+end)
