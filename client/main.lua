@@ -72,7 +72,6 @@ end
 qbx.entityStateHandler('nitroFlames', function(veh, netId, value)
     if not veh or not DoesEntityExist(veh) then return end
     RemoveNamedPtfxAsset("veh_xs_vehicle_mods")
-
     RequestNamedPtfxAsset("veh_xs_vehicle_mods")
     RequestPtfxAsset("veh_xs_vehicle_mods")
 
